@@ -504,7 +504,11 @@ function onNotify(key, value, old_value)
 end
 
 -- Clears every entrance item's revealed connection state (called on each connect).
+-- Also drops the restored-from-save map, so a reconnect that enables a new category can't
+-- re-apply a stale connection to a freshly created item. The server is authoritative from
+-- here on: updateEntrances re-reveals from the DataStorage warps list.
 function resetEntrances()
+    ENTRANCE_SAVED_STATE = {}
     if not ENTRANCE_ITEMS then
         return
     end
