@@ -55,6 +55,10 @@ createFlyDestinationItems()
 -- map now; the actual EntranceItems are instantiated by createEntrancesForEnabled(), driven by
 -- refreshERCategories() (called at the end of init and whenever a category toggles / on connect).
 buildEntranceCategoryMap()
+-- Holds the revealed connections across restarts. Must be created HERE, during init: PopTracker
+-- hands out stable save IDs once, right after init returns, and the EntranceItems don't exist
+-- yet at that point. See EntranceStateItem in entrance_item.lua.
+ENTRANCE_STATE_ITEM = EntranceStateItem()
 ScriptHost:LoadScript("scripts/routing/route_mode.lua")
 -- Structural sanity check: warns loudly if a warp is declared in only one of the graph /
 -- registry, has a bad category, or collides on an id. Read-only; no-ops until data exists.
