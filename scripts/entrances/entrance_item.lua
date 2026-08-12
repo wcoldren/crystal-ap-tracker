@@ -280,6 +280,7 @@ function EntranceStateItem:load(data)
     if type(data) ~= "table" then
         return true
     end
+    local restored = 0
     for token, packed in pairs(data) do
         if type(packed) == "string" then
             local fwd, rev = string.match(packed, "^([^|]*)|([^|]*)$")
@@ -287,6 +288,7 @@ function EntranceStateItem:load(data)
                 fwd = fwd ~= "" and fwd or nil
                 rev = rev ~= "" and rev or nil
                 ENTRANCE_SAVED_STATE[token] = {fwd, rev}
+                restored = restored + 1
                 -- The entrances may already exist: PopTracker restores json_items (the ER
                 -- toggles, whose watch builds them) before lua_items. Whichever of the two
                 -- runs first, the other path fills in the rest.
@@ -297,6 +299,13 @@ function EntranceStateItem:load(data)
                 end
             end
         end
+    end
+    -- Revealing connections changes what is reachable, so the accessibility cache built before
+    -- this point is wrong. Every other reveal path invalidates too (updateEntrances,
+    -- refreshERCategories); without this a CanReach between the json_items and lua_items passes
+    -- of the load would be cached as if no entrance were revealed, and stay that way.
+    if restored > 0 and InvalidateCanReach then
+        InvalidateCanReach()
     end
     return true
 end
