@@ -33,6 +33,36 @@ local function HomeRegion()
     return nil
 end
 
+--- The fly destinations currently unlocked, as ready-made route hops. Read off Entry_point's
+--- fly edges so the unlock rule and the destination mapping stay in one place
+--- (connections.lua's connect_fly + FlyDetourTarget). Rebuilt per GetRoute call, since
+--- unlocks and destinations both change with slot data.
+---@return table[] list of { node = target, label = string }
+local FLY_HOPS = {}
+local function buildFlyHops()
+    FLY_HOPS = {}
+    for _, exit in pairs(Entry_point.exits) do
+        local token = exit[7]
+        if token then
+            local access = exit[2](0)
+            if type(access) == "boolean" then
+                access = A(access)
+            end
+            if access and access > ACCESS_SEQUENCEBREAK - 1 then
+                local target = FlyDetourTarget(token)
+                if target and target ~= Empty_node
+                        and target:accessibility() > ACCESS_SEQUENCEBREAK - 1 then
+                    table.insert(FLY_HOPS, { node = target, label = "Fly to " .. tostring(token) })
+                end
+            end
+        end
+    end
+end
+
+function FlyHops()
+    return FLY_HOPS
+end
+
 --- Depth-first search over the graph honoring the entrance detour. Fills PATH with the
 --- pretty-name of each TRANSITION (edge) taken when a route to `finish` is found. Only steps
 --- onto nodes that are both reachable (cached accessibility) and whose edge rule passes.
@@ -105,6 +135,18 @@ local function FindPath(start, finish, stage)
         table.insert(next_sweep, { node = HOME, label = "Warp Home" })
     end
 
+    -- Fly: same deal. The fly edges live on Entry_point (connections.lua), which nothing
+    -- connects TO, so a search starting from an arbitrary region could never reach them --
+    -- only the accessibility flood fill, which starts AT Entry_point, ever got to fly. That
+    -- left every region reachable only via a fly destination unroutable ("No Route Found")
+    -- even while the map showed it in logic. Offer each unlocked destination as a one-hop
+    -- transition from anywhere, exactly like Warp Home.
+    for _, hop in ipairs(FlyHops()) do
+        if start ~= hop.node then
+            table.insert(next_sweep, hop)
+        end
+    end
+
     for _, step in pairs(next_sweep) do
         if FindPath(step.node, finish, stage) then
             PATH[stage] = step.label
@@ -152,6 +194,7 @@ function GetRoute(start, finish)
     PATH = {}
     STEPS = -1
     HOME = HomeRegion()
+    buildFlyHops()
 
     FindPath(start, finish, 0)
     clearRouteTiles()
