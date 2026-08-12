@@ -37,13 +37,14 @@ end
 --- fly edges so the unlock rule and the destination mapping stay in one place
 --- (connections.lua's connect_fly + FlyDetourTarget). Rebuilt per GetRoute call, since
 --- unlocks and destinations both change with slot data.
----@return table[] list of { node = target, label = string }
 local FLY_HOPS = {}
 local function buildFlyHops()
     FLY_HOPS = {}
     for _, exit in pairs(Entry_point.exits) do
         local token = exit[7]
         if token then
+            -- Same call the flood fill makes: CanReach seeds Entry_point with
+            -- discover(ACCESS_NORMAL, 0), and discover passes that keys value to each rule.
             local access = exit[2](0)
             if type(access) == "boolean" then
                 access = A(access)
@@ -52,16 +53,19 @@ local function buildFlyHops()
                 local target = FlyDetourTarget(token)
                 if target and target ~= Empty_node
                         and target:accessibility() > ACCESS_SEQUENCEBREAK - 1 then
-                    table.insert(FLY_HOPS, { node = target, label = "Fly to " .. tostring(token) })
+                    -- Label where you land, not the vanilla town the edge is named for: with
+                    -- randomized destinations the "Vermilion" token can land you in Cianwood.
+                    -- Same text on a vanilla seed, where the two are the same place.
+                    table.insert(FLY_HOPS, {
+                        node = target,
+                        label = "Fly: " .. FlyRegionPrettyName(target.name),
+                    })
                 end
             end
         end
     end
 end
 
-function FlyHops()
-    return FLY_HOPS
-end
 
 --- Depth-first search over the graph honoring the entrance detour. Fills PATH with the
 --- pretty-name of each TRANSITION (edge) taken when a route to `finish` is found. Only steps
@@ -135,15 +139,19 @@ local function FindPath(start, finish, stage)
         table.insert(next_sweep, { node = HOME, label = "Warp Home" })
     end
 
-    -- Fly: same deal. The fly edges live on Entry_point (connections.lua), which nothing
-    -- connects TO, so a search starting from an arbitrary region could never reach them --
-    -- only the accessibility flood fill, which starts AT Entry_point, ever got to fly. That
-    -- left every region reachable only via a fly destination unroutable ("No Route Found")
-    -- even while the map showed it in logic. Offer each unlocked destination as a one-hop
-    -- transition from anywhere, exactly like Warp Home.
-    for _, hop in ipairs(FlyHops()) do
-        if start ~= hop.node then
-            table.insert(next_sweep, hop)
+    -- Fly: the fly edges live on Entry_point (connections.lua), which nothing connects TO, so
+    -- a search starting from an arbitrary region can never reach them on its own -- they have
+    -- to be injected here the same way Warp Home is.
+    --
+    -- Only from HOME, because you cannot fly indoors and the graph has no indoor/outdoor data
+    -- to test against (can_fly() is a pure item check). Warping home always puts you outside,
+    -- so "Warp Home -> Fly: X" is legal from anywhere, at the cost of one redundant hop when
+    -- you were already outdoors.
+    if HOME and start == HOME then
+        for _, hop in ipairs(FLY_HOPS) do
+            if start ~= hop.node then
+                table.insert(next_sweep, hop)
+            end
         end
     end
 
