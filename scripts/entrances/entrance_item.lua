@@ -200,6 +200,20 @@ function buildEntranceCategoryMap()
     end
 end
 
+--- Restored connections from the save, keyed by token: ENTRANCE_SAVED_STATE[token] = {fwd, rev}.
+--- Populated by EntranceStateItem:load(), consumed by createEntrancesForEnabled(). Kept around
+--- after it is applied because the two run in either order (see EntranceStateItem below).
+ENTRANCE_SAVED_STATE = {}
+
+--- Apply any restored connection for this token to an existing item.
+local function applySavedState(token, item)
+    local saved = ENTRANCE_SAVED_STATE[token]
+    if saved then
+        item:setForward(saved[1])
+        item:setReverse(saved[2])
+    end
+end
+
 --- Instantiate EntranceItems ONLY for entrances whose ER category is currently enabled.
 --- A vanilla (non-shuffled) entrance has a fixed connection and needs no tracker item, so the
 --- LuaItem count tracks what's actually shuffled (0 on a non-ER seed). This is what keeps
@@ -217,8 +231,81 @@ function createEntrancesForEnabled()
         if not ENTRANCE_ITEMS[token] then
             local cat = ENTRANCE_CATEGORY[token]
             if cat and ER_CATEGORY_ENABLED[cat] then
-                ENTRANCE_ITEMS[token] = EntranceItem(token, row)
+                local item = EntranceItem(token, row)
+                ENTRANCE_ITEMS[token] = item
+                applySavedState(token, item)
             end
         end
     end
+end
+
+-- Persistence for the revealed connections.
+--
+-- The EntranceItems themselves cannot carry this. PopTracker assigns Lua items their stable
+-- save IDs exactly once, right after init.lua returns, and at that moment no EntranceItem
+-- exists yet: the ER toggles are still at their default Off stage, so refreshERCategories()
+-- enables nothing and createEntrancesForEnabled() creates nothing. The items are only built
+-- later, when the restored toggles (or onClear) fire the er_<cat> watch -- too late for an ID.
+-- Items without a stable ID fall back to matching on an unstable sequential ID handed out in
+-- pairs(ENTRANCE_REGISTRY) order, which would restore connections onto the wrong entrances.
+--
+-- So the whole map lives on this single item instead, created during init (hence it gets a
+-- stable ID) and keyed by token rather than by position. One item also keeps _luaItems small,
+-- which is the same reason entrances are only materialized per enabled category.
+--
+-- Payload is flat (token -> "<fwd>|<rev>", either side possibly empty) because CustomItem:save
+-- is documented for simple value types.
+--
+-- NOTE: the Name below feeds the stable ID. Renaming it orphans every existing save.
+EntranceStateItem = CustomItem:extend()
+
+function EntranceStateItem:init()
+    self:createItem("ER Connection State", {})
+end
+
+function EntranceStateItem:save()
+    local data = {}
+    if ENTRANCE_ITEMS then
+        for token, item in pairs(ENTRANCE_ITEMS) do
+            if item:isRevealed() then
+                data[token] = (item.forwardTarget or "") .. "|" .. (item.reverseSource or "")
+            end
+        end
+    end
+    return data
+end
+
+function EntranceStateItem:load(data)
+    ENTRANCE_SAVED_STATE = {}
+    if type(data) ~= "table" then
+        return true
+    end
+    local restored = 0
+    for token, packed in pairs(data) do
+        if type(packed) == "string" then
+            local fwd, rev = string.match(packed, "^([^|]*)|([^|]*)$")
+            if fwd then
+                fwd = fwd ~= "" and fwd or nil
+                rev = rev ~= "" and rev or nil
+                ENTRANCE_SAVED_STATE[token] = {fwd, rev}
+                restored = restored + 1
+                -- The entrances may already exist: PopTracker restores json_items (the ER
+                -- toggles, whose watch builds them) before lua_items. Whichever of the two
+                -- runs first, the other path fills in the rest.
+                local item = ENTRANCE_ITEMS and ENTRANCE_ITEMS[token]
+                if item then
+                    item:setForward(fwd)
+                    item:setReverse(rev)
+                end
+            end
+        end
+    end
+    -- Revealing connections changes what is reachable, so the accessibility cache built before
+    -- this point is wrong. Every other reveal path invalidates too (updateEntrances,
+    -- refreshERCategories); without this a CanReach between the json_items and lua_items passes
+    -- of the load would be cached as if no entrance were revealed, and stay that way.
+    if restored > 0 and InvalidateCanReach then
+        InvalidateCanReach()
+    end
+    return true
 end
