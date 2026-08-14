@@ -67,6 +67,56 @@ local function buildFlyHops()
 end
 
 
+--- The regions you can take off from, i.e. the ones that are outdoors. Nothing in the pack
+--- records indoor/outdoor -- region_definitions.lua is a bare name list, and the ER category on
+--- an entrance edge is stamped on BOTH directions so it cannot say which side is inside -- so
+--- derive it: seed with the vanilla fly towns and grow along walking edges only.
+---
+--- Doors are the only way indoors, so a flood that never crosses one cannot leak inside. Built
+--- from the structural graph with no detour applied, because being outdoors is a property of the
+--- place and must not move when entrances are shuffled.
+---
+--- Under-approximating is the safe failure: a region left out just keeps the old
+--- "Warp Home -> Fly" route. Over-approximating is what would emit an illegal takeoff from
+--- indoors. Gates cut the flood (Route 15 reaches Fuchsia City only through the gate building),
+--- so anything behind one is missed, and that is fine.
+local OUTDOOR = nil
+local function buildOutdoorSet()
+    OUTDOOR = {}
+    local queue = {}
+
+    -- Seeds: the vanilla fly destinations. Not FLY_ARRIVAL_REGIONS -- those are randomized
+    -- LANDING spots, and being able to land somewhere does not mean you can fly back out of it
+    -- (REGION_TIN_TOWER_ROOF is in that set).
+    for _, name in pairs(FLY_VANILLA_REGIONS or {}) do
+        local node = NAMED_NODES[name]
+        if node and not OUTDOOR[node.name] then
+            OUTDOOR[node.name] = true
+            queue[#queue + 1] = node
+        end
+    end
+
+    local i = 1
+    while i <= #queue do
+        local node = queue[i]
+        i = i + 1
+        for _, exit in pairs(node.exits) do
+            -- exit[3] is_entrance (a door) and exit[7] fly token: both leave the outdoors, or
+            -- in fly's case are the thing being gated. Only plain walking edges keep you out.
+            if not exit[3] and not exit[7] then
+                local target = exit[1]
+                -- connect_one_way with a string target builds a check leaf -- an ordinary
+                -- non-entrance edge to a location dead-end. Regions are the only real nodes.
+                if target and target ~= Empty_node and not OUTDOOR[target.name]
+                        and string.sub(target.name, 1, 7) == "REGION_" then
+                    OUTDOOR[target.name] = true
+                    queue[#queue + 1] = target
+                end
+            end
+        end
+    end
+end
+
 --- Depth-first search over the graph honoring the entrance detour. Fills PATH with the
 --- pretty-name of each TRANSITION (edge) taken when a route to `finish` is found. Only steps
 --- onto nodes that are both reachable (cached accessibility) and whose edge rule passes.
@@ -143,11 +193,11 @@ local function FindPath(start, finish, stage)
     -- a search starting from an arbitrary region can never reach them on its own -- they have
     -- to be injected here the same way Warp Home is.
     --
-    -- Only from HOME, because you cannot fly indoors and the graph has no indoor/outdoor data
-    -- to test against (can_fly() is a pure item check). Warping home always puts you outside,
-    -- so "Warp Home -> Fly: X" is legal from anywhere, at the cost of one redundant hop when
-    -- you were already outdoors.
-    if HOME and start == HOME then
+    -- Only from outdoors, because you cannot fly indoors and can_fly() is a pure item check that
+    -- will not tell you where you are standing. OUTDOOR is derived above; HOME stays in as a
+    -- fallback so a short or empty set can only cost the old redundant "Warp Home" hop, never
+    -- produce a takeoff from inside a building.
+    if HOME and (start == HOME or OUTDOOR[start.name]) then
         for _, hop in ipairs(FLY_HOPS) do
             if start ~= hop.node then
                 table.insert(next_sweep, hop)
@@ -203,6 +253,11 @@ function GetRoute(start, finish)
     STEPS = -1
     HOME = HomeRegion()
     buildFlyHops()
+    -- Structural, so it never changes after load: build once, on first use, which also keeps this
+    -- independent of where fly_registry.lua sits in the load order.
+    if not OUTDOOR then
+        buildOutdoorSet()
+    end
 
     FindPath(start, finish, 0)
     clearRouteTiles()
