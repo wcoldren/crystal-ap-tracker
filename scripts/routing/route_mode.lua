@@ -269,12 +269,22 @@ function GetRoute(start, finish)
             PATH[i] = nil
         end
         local line = 0
+        local truncated = false
         for stage = 1, STEPS - 1 do
             local label = PATH[stage]
             if label and label ~= "" then
+                -- Reserve the last tile for the marker rather than letting the remaining hops
+                -- fall off the end of the tile list unannounced.
+                if line >= ROUTE_TILE_COUNT then
+                    truncated = true
+                    break
+                end
                 writeRouteTile(line, label)
                 line = line + 1
             end
+        end
+        if truncated then
+            writeRouteTile(ROUTE_TILE_COUNT, "... route continues")
         end
         if line == 0 then
             -- reachable, but no named transition lies between them (same area)
