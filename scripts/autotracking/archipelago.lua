@@ -1083,10 +1083,6 @@ function updateHints()
 end
 
 
--- Store last map values
-last_map_group = nil
-last_map_number = nil
-
 function onMap(value)
     if has("automap_on") and value ~= nil and value["data"] ~= nil then 
         local slot = getDigits("slotdigit_1", "slotdigit_2", "slotdigit_3")
@@ -1098,34 +1094,36 @@ function onMap(value)
         
             -- This whole thing about SSAQUA exists to properly show west- or eastbound
             local ssaqua = Tracker:FindObjectForCode("ssaqua")
-    
-            -- Detect map transition logic
-            if last_map_group == 15 and last_map_number == 1 and map_group == 15 and map_number == 3 then
-                ssaqua.CurrentStage = 1
-            elseif last_map_group == 15 and last_map_number == 2 and map_group == 15 and map_number == 3 then
-                ssaqua.CurrentStage = 2
-            end
-    
-            -- Check and possibly modify map_group based on conditions
+
+            -- Record which way the next voyage runs from the port you are standing on: Olivine
+            -- sails east, Vermilion sails west. Taken at the port rather than on the port -> 1F
+            -- transition so it survives closing the tracker mid-voyage, and so it still works when
+            -- entrance randomization moves the gangway and you never walk that transition at all.
+            -- ssaqua is a tracker item, so the stage persists in the save.
             if map_group == 15 then
-                if ssaqua.CurrentStage == 1 then
-                    map_group = 115
-                elseif ssaqua.CurrentStage == 2 then
-                    map_group = 215
+                if map_number == 1 then
+                    ssaqua.CurrentStage = 1
+                elseif map_number == 2 then
+                    ssaqua.CurrentStage = 2
                 end
             end
-    
+
+            -- The ship interiors live in 115/215; MAP_MAPPING[15][3..7] are deliberately empty.
+            -- Default to eastbound when the direction was never established, so the ship shows a
+            -- map instead of silently leaving whatever was on screen. ssaqua is progressive, so a
+            -- wrong guess is one click to correct.
+            if map_group == 15 then
+                map_group = ssaqua.CurrentStage == 2 and 215 or 115
+            end
+
             -- Access correct mapping and activate tabs
             local tabs = MAP_MAPPING[map_group] and MAP_MAPPING[map_group][map_number]
-            
-            for i, tab in ipairs(tabs) do
-                Tracker:UiHint("ActivateTab", tab)
+
+            if tabs then
+                for i, tab in ipairs(tabs) do
+                    Tracker:UiHint("ActivateTab", tab)
+                end
             end
-            
-    
-            -- Save last processed map
-            last_map_group = value["data"]["mapGroup_0"] or value["data"]["mapGroup_"..slot]
-            last_map_number = value["data"]["mapNumber_0"] or value["data"]["mapNumber_"..slot]
         end
     end
 end
